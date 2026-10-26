@@ -1,32 +1,48 @@
 services:
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: intelligence-phoenix
+    ports:
+      - "6006:6006"
+      - "4317:4317"
+    restart: unless-stopped
+
   redis:
-    image: redis:7.4.2-alpine
-    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "always", "--maxmemory-policy", "noeviction"]
-    ports: ["127.0.0.1:6379:6379"]
-    volumes: ["redis-data:/data"]
+    image: redis:7.4-alpine
+    container_name: intelligence-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 3s
-      timeout: 2s
-      retries: 20
+      interval: 5s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
+
   api:
     build: .
-    env_file: .env
+    container_name: intelligence-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
     environment:
-      REDIS_URL: redis://redis:6379/0
-    ports: ["127.0.0.1:8000:8000"]
+      - PHOENIX_ENABLED=true
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces
+      - CHECKPOINTER_BACKEND=redis
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./storage:/app/storage
+      - ./results:/app/results
     depends_on:
-      redis: {condition: service_healthy}
+      redis:
+        condition: service_healthy
+      phoenix:
+        condition: started
     restart: unless-stopped
-  worker:
-    build: .
-    command: ["python", "-m", "app.worker"]
-    env_file: .env
-    environment:
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      redis: {condition: service_healthy}
-    restart: unless-stopped
+
 volumes:
-  redis-data:
+  redis_data:

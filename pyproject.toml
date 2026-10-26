@@ -1,9 +1,15 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "ai-engineering-tutor-api"
+name = "the-intelligence-system"
 version = "1.0.0"
+description = "Sistema Intelligence de grado de producción: RAG + Multi-Agentes con Supervisor (LangGraph) + FastAPI Async + Persistencia + Observabilidad en Arize Phoenix"
+readme = "README.md"
 requires-python = ">=3.12"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = ["src"]

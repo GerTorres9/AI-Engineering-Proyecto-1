@@ -1,8 +1,9 @@
 .git
-.env
-.env.*
 .venv
 __pycache__
 .pytest_cache
-artifacts
-screenshots
+.env
+.env.*
+!.env.example
+storage
+.DS_Store

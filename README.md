@@ -1,256 +1,224 @@
-Tutor de programación · API multi-agente
-======================================
+# 🧠 The Intelligence System — Sistema Multi-Agente RAG de Grado de Producción
 
-**Pre-entrega 7 — API de producción y monitoreo activo**
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](#requisitos)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Async-009688?logo=fastapi&logoColor=white)](#interfaz-de-api-profesional)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Supervisor%20%2B%20Checkpointer-1C3C3C)](#arquitectura-y-diagrama-de-flujo-del-grafo-de-agentes)
+[![ChromaDB](https://img.shields.io/badge/RAG-ChromaDB%20%2B%20tiktoken-FF6F00)](#estrategia-rag-avanzado)
+[![Arize Phoenix](https://img.shields.io/badge/Observabilidad-Arize%20Phoenix%20OTel-7B2CBF)](#observabilidad-y-trazabilidad-en-arize-phoenix)
+[![Pydantic v2](https://img.shields.io/badge/Validaci%C3%B3n-Pydantic%20v2-E92063)](#validacion-estricta-con-pydantic-v2)
 
-Gerardo Samuel Torres López
+**The Intelligence System** es un sistema de Inteligencia Artificial de grado de producción para **Atención al Cliente, Gestión de Pedidos y Cumplimiento de Políticas en E-Commerce**. Ensambla y unifica en una arquitectura 100% asíncrona los componentes desarrollados a lo largo del programa:
 
-API REST en Python 3.12+ que recibe una consulta, la encola en Redis y devuelve un `job_id` con HTTP **202**. Un worker separado coordina tres agentes con LangGraph: planificador, tutor y revisor. El cliente consulta el resultado sin mantener abierta una llamada al modelo.
+1. **Cimientos Asíncronos & API Profesional (`FastAPI` + `uvicorn` + `httpx` + `aiosqlite`)**: Endpoints `async def` sin llamadas bloqueantes, soporte de streaming Server-Sent Events (SSE) y documentación interactiva OpenAPI/Swagger.
+2. **RAG Avanzado (`ChromaDB` + `RecursiveCharacterTextSplitter` + `tiktoken`)**: Ingesta con conteo real de tokens (`CHUNK_SIZE=500`, `CHUNK_OVERLAP=50`), enriquecimiento de metadatos documentales (`POL-001`, `SOP-002`, `SLA-003`, `SEC-004`, `RET-005`, `SUP-006`) y recuperación ejecutada fuera del event loop (`asyncio.to_thread`).
+3. **Inteligencia Colectiva con Supervisor (`LangGraph`)**: Topología jerárquica **Supervisor–Workers** donde un agente **Supervisor** coordina de forma autónoma a especialistas de **Sentimiento y Triage**, **Consulta Operativa de Pedidos**, **Recuperación RAG**, **Analista/Redactor** y **Crítico/Validador**, incluyendo un ciclo controlado de reparación (`retry`) y freno de seguridad hacia **Soporte Humano (`human_escalation`)**.
+4. **Persistencia de Conversaciones (`Checkpointer` de LangGraph)**: Implementa `AsyncSqliteSaver` (persistencia local en disco `./storage/checkpoints.sqlite` que sobrevive reinicios del servidor sin requerir contenedores externos) y `AsyncRedisCheckpointer` (para despliegues distribuidos con Redis).
+5. **Validación Estricta (`Pydantic v2`)**: Contratos tipados con `ConfigDict(extra="forbid")` tanto en entradas/salidas de la API como en todas las herramientas y estados de los agentes.
+6. **Observabilidad Completa (`Arize Phoenix` + `OpenTelemetry` / `OpenInference`)**: Instrumentación automática y spans personalizados por agente y herramienta, registrando latencias desglosadas, uso de tokens, costo estimado y evaluaciones de grounding.
 
-El proyecto conserva el propósito y el prompt didáctico del tutor LCEL original. El repositorio de partida contenía una única cadena asíncrona; esta versión incorpora el grafo multi-agente y la infraestructura de la pre-entrega.
+---
 
-**Estado de la evidencia:** las capturas del dashboard deben generarse con claves reales de OpenAI y LangSmith. `screenshots/` contiene las instrucciones y los nombres esperados; no contiene evidencia simulada. Las pruebas usan un modelo de prueba y Redis real, y no demuestran costos ni trazas remotas.
+## 🏗️ Arquitectura y Diagrama de Flujo del Grafo de Agentes
 
-Funcionamiento
---------------
+El sistema implementa una topología **Supervisor–Workers con ciclo de validación y freno de seguridad** en LangGraph (`src/intelligence_system/graph.py`):
 
 ```mermaid
 flowchart TD
-    API["FastAPI: HTTP 202"] --> Q["Redis Streams: cola"]
-    Q --> W["Worker: cinco consumidores"]
-    W --> R["Clasificación de riesgo"]
-    R --> H{"Aprobación humana"}
-    H -->|tarea normal o aprobada| P["Agente planificador"]
-    H -->|crítica pendiente| I["Interrupt persistido en Redis"]
-    I --> A["POST /tasks/id/approve"]
-    A --> Q
-    H -->|rechazada| X["REJECTED"]
-    P --> T["Agente tutor"]
-    T --> V["Agente revisor"]
-    V --> F["Resultado y herramienta autorizada"]
-    F --> D["DONE en Redis"]
-    W -. checkpoints .-> C["AsyncRedisCheckpointer"]
-    W -. trazas .-> L["LangSmith"]
+    START(["START (Solicitud API / thread_id)"]) --> SUP["🧭 Agente Supervisor<br/><i>Coordina especialistas y estado</i>"]
+
+    SUP -->|"1. Sin clasificación inicial"| TRIAGE["🎭 Especialista de Sentimiento y Triage<br/><i>Clasifica polaridad, urgencia, tema y ORD-XXXX</i>"]
+    TRIAGE --> SUP
+
+    SUP -->|"2. Menciona pedido ORD-XXXX"| ORDER["📦 Especialista de Pedidos (Async SQLite)<br/><i>Consulta estado real y enmascara PII (SEC-004)</i>"]
+    ORDER --> SUP
+
+    SUP -->|"3. Requiere políticas / KB"| RAG["📚 Especialista RAG (ChromaDB)<br/><i>Búsqueda vectorial + metadatos (POL/SOP/SLA/RET/SEC/SUP)</i>"]
+    RAG --> SUP
+
+    SUP -->|"4. Evidencia lista o Reintento de corrección"| ANALYST["✍️ Analista / Redactor Personalizado<br/><i>Sintetiza respuesta empática con citas [source: ID]</i>"]
+    ANALYST --> SUP
+
+    SUP -->|"5. Borrador generado"| CRITIC["⚖️ Agente Crítico / Validador<br/><i>Validación determinística de citas + Juez Semántico LLM</i>"]
+    CRITIC --> SUP
+
+    SUP -->|"Aprobado (grounded & relevant & citations OK)"| END_OK(["✅ END: Publicar Respuesta Validada<br/><i>Persiste turno en Checkpointer</i>"])
+    SUP -->|"No aprobado & retry_count <= MAX_RETRIES"| ANALYST
+    SUP -->|"Señal crítica (PROFECO / fraude / doble cobro)<br/>o retry_count > MAX_RETRIES"| HUMAN["🚨 Nodo de Escalamiento Humano (HITL)<br/><i>Deriva caso prioritario según SLA-003</i>"]
+    HUMAN --> END_ESC(["🔒 END: Caso en Cola de Supervisión Humana<br/><i>Resoluble vía POST /api/v1/threads/{id}/resolve</i>"])
+
+    style START fill:#4CAF50,stroke:#2E7D32,color:#fff
+    style SUP fill:#EDE7F6,stroke:#4527A0,stroke-width:2px
+    style TRIAGE fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+    style ORDER fill:#E0F2F1,stroke:#00695C,stroke-width:2px
+    style RAG fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    style ANALYST fill:#FFF8E1,stroke:#F57F17,stroke-width:2px
+    style CRITIC fill:#FFF3E0,stroke:#E65100,stroke-width:2px
+    style HUMAN fill:#FFEBEE,stroke:#C62828,stroke-width:2px
+    style END_OK fill:#2E7D32,stroke:#1B5E20,color:#fff
+    style END_ESC fill:#C62828,stroke:#8E0000,color:#fff
 ```
 
-| Capacidad | Implementación |
-| --- | --- |
-| API asíncrona | `POST /tasks`, `GET /tasks/{job_id}`; I/O Redis con `await` |
-| Ejecución separada | `python -m app.worker`, Redis Streams y cinco consumidores |
-| Estado durable | `PENDING`, `RUNNING`, `WAITING_APPROVAL`, `DONE`, `FAILED`, `REJECTED` |
-| Checkpoints | `AsyncRedisCheckpointer`, equivalente a RedisSaver sobre `BaseCheckpointSaver` |
-| Observabilidad | LangGraph/LangChain + decoradores `traceable`; trazas raíz `task_execution` |
-| HITL | `interrupt()` + `Command(resume=...)` con el mismo `thread_id` |
-| Evidencia de carga | Cinco POST concurrentes; metadatos `batch_id` y `job_id` |
+### Matriz de Decisión del Supervisor
 
-Los tres agentes hacen llamadas LLM reales en producción. No hay modo de respuestas simuladas en la API. El worker usa `ainvoke()` y el endpoint HTTP solo escribe el estado y el mensaje en una transacción Redis.
+| Condición evaluada en `IntelligenceState` | Destino del Supervisor | Justificación arquitectónica |
+|---|---|---|
+| `triage is None` | `triage_specialist` | Analiza sentimiento, urgencia, categoría, señales de escalamiento y extrae `order_id`. |
+| `triage.needs_order_lookup` y `order_info is None` | `order_specialist` | Verifica en `orders.sqlite` (`aiosqlite`) el estado real del pedido sin inventar fechas (`SOP-002`). |
+| `rag_completed is False` | `rag_specialist` | Recupera fragmentos relevantes de `ChromaDB` con `asyncio.to_thread`. |
+| `answer == ""` | `analyst_drafter` | Genera (o repara) el borrador citando `[source: ID]` y respetando el historial del `Checkpointer`. |
+| `review is None` | `critic_validator` | Ejecuta `validate_citations` (determinístico) + evaluación semántica `GroundingReview`. |
+| `triage.escalation_required == True` | `human_escalation` | Escalamiento obligatorio ante disputas legales/PROFECO, fraude o doble cobro (`SLA-003`). |
+| `review.approved == True` | `FINISH` (`END`) | La respuesta está fundamentada, cita fuentes válidas y cumple políticas. |
+| `review.approved == False` y `retry_count <= MAX_VALIDATION_RETRIES` | `analyst_drafter` | **Ciclo de autoreparación**: inyecta `validation_error` al Analista para corregir citas o afirmaciones. |
+| `review.approved == False` y `retry_count > MAX_VALIDATION_RETRIES` | `human_escalation` | **Freno de seguridad** contra bucles infinitos. |
 
-Levantar con Docker Compose
---------------------------
+---
 
-Requisitos: Git, Docker con Compose y claves de OpenAI y LangSmith. El consumo del modelo se factura en la cuenta del proveedor.
+## 📁 Estructura Unificada del Proyecto
+
+```text
+intelligence-system/
+├── .env.example                        # Plantilla de variables de entorno (sin secretos hard-codeados)
+├── .gitignore                          # Exclusión de .env, .venv y bases locales
+├── Dockerfile                          # Imagen Python 3.12 para despliegue en contenedor
+├── docker-compose.yml                  # Orquestación opcional: API + Arize Phoenix + Redis
+├── pyproject.toml                      # Metadatos del paquete Python 3.12+ y configuración pytest
+├── requirements.txt                    # Dependencias de producción fijadas
+├── run.sh                              # Script de despliegue local en una sola instrucción
+├── data/
+│   └── knowledge_base/                 # Corpus documental Markdown con metadatos YAML
+│       ├── POL-001_politica_devoluciones.md
+│       ├── SOP-002_consulta_pedidos.md
+│       ├── SLA-003_atencion_quejas_escalamiento.md
+│       ├── SEC-004_proteccion_datos_seguridad.md
+│       ├── RET-005_plazos_reembolsos.md
+│       └── SUP-006_incidencias_tecnicas_respaldos.md
+├── evidencias/                         # Diagramas y capturas de trazas en Arize Phoenix
+│   ├── README.md
+│   └── arquitectura_trazas.png
+├── results/                            # Métricas reales exportadas por las pruebas (summary.csv, runs.jsonl)
+├── scripts/
+│   └── run_observability_eval.py       # Ejecuta los 5 escenarios de prueba y envía trazas a Phoenix
+├── src/
+│   └── intelligence_system/
+│       ├── __init__.py
+│       ├── config.py                   # Settings con pydantic-settings (0 hard-coding)
+│       ├── schemas.py                  # Modelos Pydantic v2 para API, herramientas y agentes
+│       ├── observability.py            # Configuración OpenTelemetry / OpenInference -> Arize Phoenix
+│       ├── checkpointer.py             # AsyncSqliteSaver (disco) y AsyncRedisCheckpointer (Redis)
+│       ├── database.py                 # Repositorio asíncrono de pedidos (aiosqlite) + máscara PII
+│       ├── rag.py                      # AsyncRAGManager (ChromaDB + tiktoken + asyncio.to_thread)
+│       ├── validation.py               # Validación determinística de citas [source: ID]
+│       ├── tools.py                    # Herramientas asíncronas validadas con Pydantic
+│       ├── graph.py                    # Grafo StateGraph Multi-Agente con Supervisor
+│       └── api.py                      # Aplicación FastAPI asíncrona + SSE streaming + HITL
+└── tests/
+    └── test_system.py                  # Suite pytest-asyncio (RAG, Pydantic, ciclo retry, persistencia)
+```
+
+---
+
+## 🚀 Despliegue Local en Una Sola Instrucción
+
+### Requisitos
+- **Python 3.12+**
+- Clave `OPENAI_API_KEY` configurada en `.env` (con acceso a `gpt-4o-mini` y `text-embedding-3-small`).
+
+### Opción A: Script Unificado `./run.sh` (Recomendado en macOS / Linux)
+
+1. Configura tu archivo `.env` a partir de la plantilla:
+   ```bash
+   cp .env.example .env
+   # Edita .env y coloca tu OPENAI_API_KEY=sk-...
+   ```
+2. Levanta todo el sistema con **una sola instrucción**:
+   ```bash
+   chmod +x run.sh
+   ./run.sh
+   ```
+   ¿Qué hace `./run.sh` automáticamente?
+   - Crea y configura el entorno virtual Python 3.12 en `.venv/` e instala las dependencias.
+   - Inicializa la base operativa asíncrona de pedidos (`storage/orders.sqlite`) y el índice vectorial ChromaDB (`storage/chroma`).
+   - Levanta el servidor de observabilidad **Arize Phoenix** en segundo plano (`http://localhost:6006`).
+   - Ejecuta las **5 pruebas de observabilidad** exportando trazas a Phoenix y métricas a `results/summary.csv` y `results/runs.jsonl`.
+   - Levanta la API profesional **FastAPI** en `http://localhost:8000` (Swagger UI en `http://localhost:8000/docs`).
+
+   También puedes ejecutar modos específicos:
+   ```bash
+   ./run.sh test     # Ejecuta la suite completa de pruebas unitarias e integración (pytest)
+   ./run.sh eval     # Ejecuta únicamente las 5 pruebas de observabilidad hacia Arize Phoenix
+   ./run.sh server   # Levanta Arize Phoenix (6006) + API FastAPI (8000)
+   ```
+
+### Opción B: Despliegue con Docker Compose
+
+Si cuentas con Docker instalado, puedes levantar la API, Redis y Arize Phoenix con un solo comando:
 
 ```bash
-git clone https://github.com/GerTorres9/AI-Engineering-Proyecto-1.git
-cd AI-Engineering-Proyecto-1
 cp .env.example .env
+docker compose up --build
 ```
 
-Edita `.env` y completa `OPENAI_API_KEY`, `LANGSMITH_API_KEY`, `API_TOKEN` y `APPROVAL_TOKEN`. Los dos tokens de acceso deben ser diferentes. Para generar un token local puedes usar `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'` dos veces.
+---
+
+## 🌐 Interfaz de API Profesional (FastAPI)
+
+Una vez levantado el servidor en `http://localhost:8000`, la documentación interactiva OpenAPI está disponible en:
+- **Swagger UI**: <http://localhost:8000/docs>
+- **ReDoc**: <http://localhost:8000/redoc>
+
+### Endpoints Principales
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/health` | Estado del sistema, backend del Checkpointer, fragmentos en ChromaDB y conexión a Phoenix. |
+| `POST` | `/api/v1/chat` | Ejecuta el grafo Multi-Agente con Supervisor para un `thread_id`, devolviendo respuesta validada, citas, análisis de sentimiento, estado del pedido y métricas. |
+| `POST` | `/api/v1/chat/stream` | Streaming **Server-Sent Events (SSE)** en tiempo real mostrando cada transición del Supervisor y sus especialistas. |
+| `GET` | `/api/v1/threads/{thread_id}` | Recupera desde el **Checkpointer de LangGraph** el historial de mensajes y último estado persistido (sobrevive reinicios del servidor). |
+| `POST` | `/api/v1/threads/{thread_id}/resolve` | Permite a un supervisor humano aprobar o resolver un caso escalado (**Human-in-the-Loop**). |
+| `POST` | `/api/v1/ingest` | Re-indexa de forma asíncrona los documentos de `data/knowledge_base/` en ChromaDB. |
+| `GET` | `/api/v1/orders/{order_id}` | Consulta directa asíncrona de un pedido verificado (`ORD-1001` a `ORD-1005`) con correo enmascarado. |
+
+### Ejemplo de Uso con `curl`
 
 ```bash
-docker compose up --build -d
-docker compose logs -f worker
+# 1. Enviar una consulta que combina RAG + Consulta de Pedido + Supervisor
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Mi pedido ORD-1003 tiene devolución aprobada. ¿Cuál es su estado y cuánto tarda el reembolso? Cita las fuentes.",
+    "thread_id": "sesion-cliente-1003",
+    "customer_id": "CUST-03"
+  }'
+
+# 2. Verificar que la conversación quedó persistida en el Checkpointer de LangGraph
+curl http://localhost:8000/api/v1/threads/sesion-cliente-1003
 ```
 
-- Documentación interactiva: <http://localhost:8000/docs>
-- Esquema OpenAPI: <http://localhost:8000/openapi.json>
-- Salud de API/Redis: <http://localhost:8000/health>
+---
 
-Redis usa un volumen, AOF y política `noeviction`. El checkpointer usa Redis estándar; no necesita módulos RedisJSON ni RediSearch. `docker compose down` conserva el volumen. Eliminarlo borra los trabajos y checkpoints.
+## 🔭 Observabilidad y Trazabilidad en Arize Phoenix
 
-Las claves se leen desde `.env`, que está excluido de Git y de la imagen. La API usa `API_TOKEN`; el endpoint de aprobación exige `APPROVAL_TOKEN`. Conserva este último para la persona responsable de aprobar. Los servicios se exponen en localhost para el piloto.
+El módulo `src/intelligence_system/observability.py` instrumenta tanto LangChain/LangGraph (`LangChainInstrumentor`) como spans personalizados de OpenTelemetry bajo la traza raíz `multi_agent.request`:
 
-Alternativa: Python local y Redis en Docker
-------------------------------------------
+- `agent.supervisor`: Decisiones de enrutamiento (`supervisor.next_agent`, `supervisor.rationale`, `supervisor.retry_count`).
+- `agent.triage_sentiment`: Polaridad, tipo de incidencia, urgencia, detección de escalamiento y tokens del modelo.
+- `agent.order_specialist` -> `tool.order_lookup`: Tiempo de consulta SQLite asíncrona, ID y estado del pedido.
+- `agent.rag_specialist` -> `tool.vector_search` (`tool.query_embedding` + `tool.chroma_similarity_search`): Latencia de embeddings vs búsqueda vectorial y `retrieval.source_ids`.
+- `agent.analyst`: Generación del borrador, versión de prompt (`app.prompt_version`) y conteo de tokens (`llm.input_tokens`, `llm.output_tokens`, `llm.total_tokens`).
+- `agent.semantic_review`: Atributos de evaluación `eval.grounded`, `eval.relevant`, `eval.citation_valid` y `eval.unsupported_claim_count`.
+- `agent.human_escalation`: Motivo de derivación a soporte humano según `SLA-003`.
 
+### Las 5 Pruebas de Observabilidad Incluidas (`scripts/run_observability_eval.py`)
+
+1. **Prueba 1 (RAG Puro — Devoluciones)**: Consulta requisitos, plazo de 30 días y excepciones (`POL-001`).
+2. **Prueba 2 (RAG + Base de Pedidos `ORD-1003`)**: Verifica estado `refund_pending` (`SOP-002`) y plazos bancarios de 5 a 7 días hábiles (`RET-005`).
+3. **Prueba 3 (RAG + Pedido Retrasado `ORD-1002`)**: Consulta último evento logístico en Monterrey, estados permitidos (`SOP-002`) y SLA de 24 horas (`SLA-003`).
+4. **Prueba 4 (Multi-Turno en el mismo `thread_id` + Incidencia Técnica)**: Comprueba que el Checkpointer conserva el contexto del turno anterior y responde sobre diagnóstico técnico y respaldos incrementales cada 6 horas (`SUP-006`).
+5. **Prueba 5 (Caso Crítico de Doble Cobro en `ORD-1005` + Amenaza PROFECO)**: Verifica que el Supervisor detecta la señal crítica y deriva automáticamente al nodo `human_escalation` (`SLA-003`, `RET-005`).
+
+Además soporta banderas adicionales para inspección de casos borde:
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-docker compose up -d redis
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+PYTHONPATH=src .venv/bin/python scripts/run_observability_eval.py --out-of-scope
+PYTHONPATH=src .venv/bin/python scripts/run_observability_eval.py --simulate-failure
 ```
-
-En otra terminal, desde la misma carpeta:
-
-```bash
-source .venv/bin/activate
-python -m app.worker
-```
-
-En esta modalidad usa `REDIS_URL=redis://localhost:6379/0`. Compose cambia la dirección a `redis://redis:6379/0` dentro de sus contenedores.
-
-Enviar y consultar una tarea
-----------------------------
-
-En una terminal local, carga las variables de tu `.env`:
-
-```bash
-set -a
-source .env
-set +a
-curl -s http://localhost:8000/tasks \
-  -H "Authorization: Bearer $API_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"pregunta":"¿Qué es la programación asíncrona?"}'
-```
-
-Respuesta inmediata, sin esperar al LLM:
-
-```json
-{"job_id":"<uuid>","status":"PENDING","status_url":"/tasks/<uuid>"}
-```
-
-Sustituye `<uuid>` por el identificador recibido:
-
-```bash
-curl -s "http://localhost:8000/tasks/<uuid>" \
-  -H "Authorization: Bearer $API_TOKEN"
-```
-
-`DONE` incluye `result.answer`. `FAILED` incluye el tipo de error; los detalles técnicos están en el log y la traza. No se presenta un fallo de conexión como una ejecución correcta. También puedes usar `python orquestador_concurrente.py` como cliente CLI del tutor.
-
-Aprobación humana
-------------------
-
-La clasificación de riesgo es del servidor. Una tarea exige aprobación si intenta guardar material, pide más tokens de salida que `CRITICAL_OUTPUT_TOKENS`, contiene más de 8,000 caracteres o solicita revisión explícita. El umbral de tokens es una política de consumo, no una estimación de dólares.
-
-```bash
-curl -s http://localhost:8000/tasks \
-  -H "Authorization: Bearer $API_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"pregunta":"Explica async y await","accion":"guardar_material"}'
-```
-
-Consulta el job hasta ver `WAITING_APPROVAL`. La propiedad `interrupt` explica el motivo. No se llama al LLM ni se guarda material mientras esta tarea crítica espera aprobación.
-
-```bash
-curl -s "http://localhost:8000/tasks/<uuid>/approve" \
-  -H "Authorization: Bearer $APPROVAL_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"approved":true,"note":"Autorizo guardar el material de estudio"}'
-```
-
-La API vuelve a encolarlo y el worker reanuda el checkpoint. Usa `approved:false` para rechazar; termina en `REJECTED`. La herramienta escribe el material en `tutor:materials:<job_id>` y es idempotente. Una segunda aprobación simultánea devuelve **409**. Puedes reiniciar API y worker mientras el job está pausado y aprobarlo después: el estado no depende de la memoria del proceso.
-
-Cinco peticiones concurrentes
------------------------------
-
-Con API, Redis y worker levantados, instala las dependencias en tu entorno local si todavía no lo hiciste:
-
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m scripts.load_test
-```
-
-El script libera cinco POST al mismo tiempo con `asyncio.gather`, comprueba HTTP 202 y hace polling hasta que los cinco jobs terminen. Guarda `artifacts/load-batch.json` con el `batch_id`, los cinco identificadores y sus trazas raíz. Cada tarea normal ejecuta tres agentes: la corrida completa tiene **15 llamadas LLM**. Los límites de la cuenta del proveedor pueden afectar el resultado; una corrida con errores debe repetirse antes de capturar evidencia.
-
-El p95 mostrado por el cliente incluye la cola y el polling. Para la entrega utiliza el p95 de las ejecuciones trazadas, siguiendo el apartado siguiente.
-
-Dashboard, costos y p95
------------------------
-
-1. Abre <https://smith.langchain.com> y entra al proyecto configurado en `LANGSMITH_PROJECT`.
-2. Filtra por el tag `batch_id` que imprimió la carga y por las trazas raíz `task_execution`. Deben aparecer exactamente cinco ejecuciones completadas.
-3. Abre una traza: verifica los nodos, las tres llamadas LLM, su duración y sus tokens de entrada/salida. Captura la lista y el árbol de una ejecución.
-4. Muestra la columna de costo de las cinco ejecuciones. LangSmith calcula el costo desde los tokens reales y el precio del modelo identificado por LangChain. Si no aparece costo, revisa modelo/proveedor y la tabla **Model pricing** antes de repetir la corrida.
-5. En **Monitoring**, filtra el mismo proyecto y la misma corrida. Si la interfaz ofrece percentil 95, selecciona p95 de latencia de las cinco trazas raíz. No uses p50 ni p99 como sustituto.
-
-Para leer la corrida de forma reproducible:
-
-```bash
-python -m scripts.monitoring
-```
-
-El script toma el costo calculado por LangSmith, obtiene el p95 mediante interpolación lineal de los cinco tiempos de las trazas raíz y señala qué agente acumula más tokens y más tiempo de LLM. Guarda el resultado en `artifacts/langsmith-metrics.json`. Los tiempos de nodos se suman para comparar su contribución; no equivalen al tiempo total de pared de cinco trabajos paralelos.
-
-**Cuando la interfaz solo ofrece p50/p99:** publica el p95 de esta corrida como un feedback numérico:
-
-```bash
-python -m scripts.monitoring --publish-p95
-```
-
-En el dashboard crea un gráfico de **Feedback score**, selecciona `batch_latency_p95_seconds`, usa **Average** y filtra solo esa corrida. El mismo p95 se adjunta a las cinco trazas, por lo que su promedio muestra ese valor. Titula el gráfico “p95 de cinco ejecuciones (segundos; derivado de trazas)”. Esta alternativa hace visible en el dashboard un percentil calculado desde tiempos reales; el costo sigue siendo el cálculo automático de la plataforma.
-
-Guarda en `screenshots/`:
-
-| Archivo | Qué debe verse |
-| --- | --- |
-| `01-trazas-corrida.png` | Cinco trazas raíz, mismo batch y estado completado |
-| `02-detalle-nodos.png` | Árbol de una traza, duración y tokens por agente |
-| `03-costo-por-ejecucion.png` | Costos automáticos de las cinco ejecuciones |
-| `04-latencia-p95.png` | p95, unidad, filtro de corrida y origen de la métrica |
-| `05-hitl.png` | Pausa y reanudación de una tarea crítica, en una corrida aparte |
-
-Compara los resultados de `scripts.monitoring` con el árbol del dashboard para identificar el nodo con más latencia y el que consume más tokens. No publiques capturas con claves ni datos personales. Los JSON ayudan a identificar la corrida, pero **no reemplazan las capturas del dashboard**.
-
-Errores, recuperación y límites
--------------------------------
-
-Las excepciones del grafo y los timeouts terminan en `FAILED`; el mensaje se confirma y el cliente puede detener el polling. Si Redis no está disponible, el worker no confirma el mensaje y la API responde 503. Si un proceso cae, otro consumidor reclama el mensaje tras `JOB_TIMEOUT_SECONDS + 60` segundos y continúa el checkpoint. Los trabajos fallidos no se reintentan automáticamente.
-
-La cola y los checkpoints usan persistencia durable, pero el piloto depende de una instancia de Redis. No incorpora alta disponibilidad, aislamiento por usuario ni una infraestructura pública con TLS. Para el ejercicio, los tokens separan la operación normal de la aprobación y Compose conserva los datos durante reinicios.
-
-Pruebas
---------
-
-Las pruebas de integración necesitan una base Redis dedicada; la suite borra esa base. Por defecto usa la base **15**:
-
-```bash
-docker compose up -d redis
-source .venv/bin/activate
-pip install -r requirements-dev.txt
-TEST_REDIS_URL=redis://localhost:6379/15 pytest -q
-```
-
-Verifican concurrencia, persistencia de interrupciones, aprobación única, rechazo, captura de fallos, autenticación y recuperación de mensajes abandonados. La suite usa un modelo determinista solo en tests, sin llamadas pagadas. GitHub Actions ejecuta estas pruebas con Redis y Python 3.12.
-
-Estructura
------------
-
-| Ruta | Contenido |
-| --- | --- |
-| `app/main.py` | Endpoints y autenticación |
-| `app/graph.py` | Grafo y agentes didácticos |
-| `app/worker.py` | Consumidores async, errores y recuperación |
-| `app/store.py` | Jobs, cola y aprobación atómica |
-| `app/checkpointer.py` | Checkpoints y pending writes en Redis |
-| `app/hitl.py` | Interrupción para aprobación externa |
-| `app/observability.py` | Configuración de LangSmith y modelo |
-| `scripts/` | Carga concurrente y lectura de métricas reales |
-| `tests/` | Pruebas con Redis |
-| `screenshots/` | Evidencia real del dashboard por agregar |
-| `requirements.txt` | Dependencias de ejecución fijadas |
-| `docker-compose.yml` | API, worker y Redis persistente |
-
-Las dependencias directas están en `requirements.in`; `requirements.txt` fija también las transitivas. Para actualizar el lock de manera deliberada usa `uv pip compile requirements.in -o requirements.txt`.
-
-Revisión antes de entregar
---------------------------
-
-- Ejecutar la suite con Redis.
-- Ejecutar la carga real: cinco `DONE` y quince llamadas LLM visibles.
-- Agregar las capturas del dashboard, costos, p95 y HITL.
-- Confirmar que `.env` y las claves no estén versionadas.
-- Publicar el repositorio y probar un clon nuevo con los comandos de instalación.
-
-Referencias técnicas
---------------------
-
-- [Persistencia de LangGraph](https://docs.langchain.com/oss/python/langgraph/persistence)
-- [Interrupts y Human-in-the-loop](https://docs.langchain.com/oss/python/langgraph/interrupts)
-- [Seguimiento de costos en LangSmith](https://docs.langchain.com/langsmith/cost-tracking)
-- [Dashboards de monitoreo](https://docs.langchain.com/langsmith/dashboards)

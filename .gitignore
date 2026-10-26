@@ -1,12 +1,35 @@
+# Entorno virtual y caché de Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Variables de entorno y secretos (NUNCA subir a GitHub)
 .env
 .env.*
 !.env.example
-.venv/
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.ruff_cache/
+
+# Almacenamiento persistente local (ChromaDB, SQLite Checkpoints, DB operativa)
+storage/
+.chroma/
+vectorstore/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+
+# Logs temporales y PID files
+logs/
+*.log
+*.pid
+
+# Sistema operativo
 .DS_Store
-artifacts/
-*.rdb
-*.sock
+Thumbs.db
